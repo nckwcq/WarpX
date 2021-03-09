@@ -728,6 +728,57 @@ MultiParticleContainer::doFieldIonization (int lev,
 }
 
 void
+MultiParticleContainer::doImpactIonization (int lev,
+					    const MultiFab& Ex,
+					    const MultiFab& Ey,
+					    const MultiFab& Ez,
+					    const MultiFab& Bx,
+					    const MultiFab& By,
+					    const MultiFab& Bz)
+{
+    WARPX_PROFILE("MultiParticleContainer::doFieldIonization()");
+
+    // Loop over all species.
+    // Ionized particles in pc_source create particles in pc_product
+    for (auto& pc_source : allcontainers)
+    {
+        if (!pc_source->do_field_ionization){ continue; }
+
+        auto& pc_product = allcontainers[pc_source->ionization_product];
+
+        SmartCopyFactory copy_factory(*pc_source, *pc_product);
+        auto phys_pc_ptr = static_cast<PhysicalParticleContainer*>(pc_source.get());
+
+        auto Copy      = copy_factory.getSmartCopy();
+        auto Transform = IonizationTransformFunc();
+
+        pc_source ->defineAllParticleTiles();
+        pc_product->defineAllParticleTiles();
+
+        auto info = getMFItInfo(*pc_source, *pc_product);
+
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (Gpu::notInLaunchRegion())
+#endif
+        for (WarpXParIter pti(*pc_source, lev, info); pti.isValid(); ++pti)
+        {
+            auto& src_tile = pc_source ->ParticlesAt(lev, pti);
+            auto& dst_tile = pc_product->ParticlesAt(lev, pti);
+
+            auto Filter = phys_pc_ptr->getIonizationFunc(pti, lev, Ex.nGrow(),
+                                                         Ex[pti], Ey[pti], Ez[pti],
+                                                         Bx[pti], By[pti], Bz[pti]);
+
+            const auto np_dst = dst_tile.numParticles();
+            const auto num_added = filterCopyTransformParticles<1>(dst_tile, src_tile, np_dst,
+                                                                   Filter, Copy, Transform);
+
+            setNewParticleIDs(dst_tile, np_dst, num_added);
+        }
+    }
+}
+
+void
 MultiParticleContainer::doCollisions ( Real cur_time )
 {
     WARPX_PROFILE("MultiParticleContainer::doCollisions()");
