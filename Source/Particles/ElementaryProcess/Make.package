@@ -1,4 +1,5 @@
 CEXE_sources += Ionization.cpp
+CEXE_sources += ImpactIonization.cpp
 
 ifeq ($(QED),TRUE)
      CEXE_sources += QEDPairGeneration.cpp
