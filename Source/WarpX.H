@@ -412,10 +412,12 @@ public:
 
     /** Run the ionization module on all species */
     void doFieldIonization ();
+    void doImpactIonization ();
     /** Run the ionization module on all species at level lev
      * \param lev level
      */
     void doFieldIonization (int lev);
+    void doImpactIonization (int lev);
 
 #ifdef WARPX_QED
     /** Run the QED module on all species */

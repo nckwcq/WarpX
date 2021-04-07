@@ -742,7 +742,7 @@ MultiParticleContainer::doImpactIonization (int lev,
     // Ionized particles in pc_source create particles in pc_product
     for (auto& pc_source : allcontainers)
     {
-        if (!pc_source->do_field_ionization){ continue; }
+        if (!pc_source->do_impact_ionization){ continue; }
 
         auto& pc_product = allcontainers[pc_source->ionization_product];
 

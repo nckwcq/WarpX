@@ -123,6 +123,7 @@ PhysicalParticleContainer::PhysicalParticleContainer (AmrCore* amr_core, int isp
     pp.query("do_back_transformed_diagnostics", do_back_transformed_diagnostics);
 
     pp.query("do_field_ionization", do_field_ionization);
+    pp.query("do_impact_ionization", do_field_ionization);
 
     pp.query("do_resampling", do_resampling);
     if (do_resampling) m_resampler = Resampling(species_name);
@@ -202,7 +203,8 @@ void PhysicalParticleContainer::InitData ()
 {
     // Init ionization module here instead of in the PhysicalParticleContainer
     // constructor because dt is required
-    if (do_field_ionization) {InitIonizationModule();}
+    if (do_field_ionization) {InitFieldIonizationModule();}
+    if (do_impact_ionization) {InitImpactIonizationModule();}
     AddParticles(0); // Note - add on level 0
     Redistribute();  // We then redistribute
 }
@@ -714,7 +716,7 @@ PhysicalParticleContainer::AddPlasma (int lev, RealBox part_realbox)
         }
 
         int* pi = nullptr;
-        if (do_field_ionization) {
+        if (do_field_ionization || do_impact_ionization) {
             pi = soa.GetIntData(particle_icomps["ionization_level"]).data() + old_size;
         }
 
@@ -748,6 +750,7 @@ PhysicalParticleContainer::AddPlasma (int lev, RealBox part_realbox)
 #endif
 
         bool loc_do_field_ionization = do_field_ionization;
+        bool loc_do_impact_ionization = do_impact_ionization;
         int loc_ionization_initial_level = ionization_initial_level;
 
         // Loop over all new particles and inject them (creates too many
@@ -862,7 +865,7 @@ PhysicalParticleContainer::AddPlasma (int lev, RealBox part_realbox)
                     u.z = gamma_boost * ( u.z -beta_boost*gamma_lab );
                 }
 
-                if (loc_do_field_ionization) {
+                if (loc_do_field_ionization || loc_do_impact_ionization) {
                     pi[ip] = loc_ionization_initial_level;
                 }
 
@@ -1039,7 +1042,7 @@ PhysicalParticleContainer::Evolve (int lev,
             if (rho) {
                 // Deposit charge before particle push, in component 0 of MultiFab rho.
                 int* AMREX_RESTRICT ion_lev;
-                if (do_field_ionization){
+                if (do_field_ionization || do_impact_ionization){
                     ion_lev = pti.GetiAttribs(particle_icomps["ionization_level"]).dataPtr();
                 } else {
                     ion_lev = nullptr;
@@ -1110,7 +1113,7 @@ PhysicalParticleContainer::Evolve (int lev,
                 //
                 if (WarpX::do_electrostatic == ElectrostaticSolverAlgo::None) {
                     int* AMREX_RESTRICT ion_lev;
-                    if (do_field_ionization){
+                    if (do_field_ionization || do_impact_ionization){
                         ion_lev = pti.GetiAttribs(particle_icomps["ionization_level"]).dataPtr();
                     } else {
                         ion_lev = nullptr;
@@ -1133,7 +1136,7 @@ PhysicalParticleContainer::Evolve (int lev,
                 // (Skipped for electrostatic solver, as this may lead to out-of-bounds)
                 if (WarpX::do_electrostatic == ElectrostaticSolverAlgo::None) {
                     int* AMREX_RESTRICT ion_lev;
-                    if (do_field_ionization){
+                    if (do_field_ionization || do_impact_ionization){
                         ion_lev = pti.GetiAttribs(particle_icomps["ionization_level"]).dataPtr();
                     } else {
                         ion_lev = nullptr;
@@ -1475,7 +1478,7 @@ PhysicalParticleContainer::PushP (int lev, Real dt,
             ParticleReal* const AMREX_RESTRICT uz = attribs[PIdx::uz].dataPtr();
 
             int* AMREX_RESTRICT ion_lev = nullptr;
-            if (do_field_ionization) {
+            if (do_field_ionization || do_impact_ionization) {
                 ion_lev = pti.GetiAttribs(particle_icomps["ionization_level"]).dataPtr();
             }
 
@@ -1825,7 +1828,7 @@ PhysicalParticleContainer::PushPX (WarpXParIter& pti,
                    (a_dt_type!=DtType::SecondHalf));
 
     int* AMREX_RESTRICT ion_lev = nullptr;
-    if (do_field_ionization) {
+    if (do_field_ionization || do_impact_ionization) {
         ion_lev = pti.GetiAttribs(particle_icomps["ionization_level"]).dataPtr();
     }
 
@@ -1897,7 +1900,7 @@ PhysicalParticleContainer::PushPX (WarpXParIter& pti,
 }
 
 void
-PhysicalParticleContainer::InitIonizationModule ()
+PhysicalParticleContainer::InitFieldIonizationModule ()
 {
     if (!do_field_ionization) return;
     ParmParse pp(species_name);
@@ -1956,6 +1959,39 @@ PhysicalParticleContainer::InitIonizationModule ()
             * std::pow(2*std::pow((Uion/UH),3./2)*Ea,2*n_eff - 1);
         p_adk_exp_prefactor[i] = -2./3 * std::pow( Uion/UH,3./2) * Ea;
     });
+
+    Gpu::synchronize();
+}
+
+void
+PhysicalParticleContainer::InitImpactIonizationModule ()
+{
+    if (!do_field_ionization) return;
+    ParmParse pp(species_name);
+    if (charge != PhysConst::q_e){
+        amrex::Warning(
+            "charge != q_e for ionizable species: overriding user value and setting charge = q_e.");
+        charge = PhysConst::q_e;
+    }
+    pp.query("ionization_initial_level", ionization_initial_level);
+    pp.get("ionization_product_species", ionization_product_name);
+    pp.get("physical_element", physical_element);
+    // Add runtime integer component for ionization level
+    AddIntComp("ionization_level");
+    // Get atomic number and ionization energies from file
+    int ion_element_id = ion_map_ids[physical_element];
+    ion_atomic_number = ion_atomic_numbers[ion_element_id];
+    Vector<Real> h_ionization_energies(ion_atomic_number);
+    int offset = ion_energy_offsets[ion_element_id];
+    for(int i=0; i<ion_atomic_number; i++){
+        h_ionization_energies[i] = table_ionization_energies[i+offset];
+    }
+
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   h_ionization_energies.begin(), h_ionization_energies.end(),
+                   ionization_energies.begin());
+
+    Real const* AMREX_RESTRICT p_ionization_energies = ionization_energies.data();
 
     Gpu::synchronize();
 }

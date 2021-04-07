@@ -310,6 +310,7 @@ public:
     amrex::ParticleReal getMass () const {return mass;}
 
     int DoFieldIonization() const { return do_field_ionization; }
+    int DoImpactIonization() const { return do_impact_ionization; }
 
 #ifdef WARPX_QED
     //Species for which QED effects are relevant should override these methods
@@ -369,6 +370,7 @@ protected:
     int do_continuous_injection = 0;
 
     int do_field_ionization = 0;
+    int do_impact_ionization = 0;
     int ionization_product;
     std::string ionization_product_name;
     int ion_atomic_number;

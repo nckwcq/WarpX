@@ -642,9 +642,9 @@ WarpXParticleContainer::DepositCharge (amrex::Vector<std::unique_ptr<amrex::Mult
             auto& wp = pti.GetAttribs(PIdx::w);
 
             int* AMREX_RESTRICT ion_lev;
-            if (do_field_ionization){
+            if (do_field_ionization || do_impact_ionization){
                 ion_lev = pti.GetiAttribs(particle_icomps["ionization_level"]).dataPtr();
-            } else {
+	    } else {
                 ion_lev = nullptr;
             }
 
@@ -721,7 +721,7 @@ WarpXParticleContainer::GetChargeDensity (int lev, bool local)
             auto& wp = pti.GetAttribs(PIdx::w);
 
             int* AMREX_RESTRICT ion_lev;
-            if (do_field_ionization){
+            if (do_field_ionization || do_impact_ionization){
                 ion_lev = pti.GetiAttribs(particle_icomps["ionization_level"]).dataPtr();
             } else {
                 ion_lev = nullptr;

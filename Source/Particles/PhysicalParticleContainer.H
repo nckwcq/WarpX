@@ -62,7 +62,8 @@ public:
 
     virtual void InitData () override;
 
-    void InitIonizationModule ();
+    void InitFieldIonizationModule ();
+    void InitImpactIonizationModule ();
 
     /**
      * \brief Evolve is the central function PhysicalParticleContainer that

@@ -281,7 +281,8 @@ WarpX::OneStep_nosub (Real cur_time)
     // Loop over species. For each ionizable species, create particles in
     // product species.
     doFieldIonization();
-
+    doImpactIonization();
+    
     mypc->doCollisions( cur_time );
 #ifdef WARPX_QED
     mypc->doQEDSchwinger();
@@ -586,6 +587,22 @@ WarpX::doFieldIonization (int lev)
     mypc->doFieldIonization(lev,
                             *Efield_aux[lev][0],*Efield_aux[lev][1],*Efield_aux[lev][2],
                             *Bfield_aux[lev][0],*Bfield_aux[lev][1],*Bfield_aux[lev][2]);
+}
+
+void
+WarpX::doImpactIonization ()
+{
+    for (int lev = 0; lev <= finest_level; ++lev) {
+        doImpactIonization(lev);
+    }
+}
+
+void
+WarpX::doImpactIonization (int lev)
+{
+    mypc->doImpactIonization(lev,
+			     *Efield_aux[lev][0],*Efield_aux[lev][1],*Efield_aux[lev][2],
+			     *Bfield_aux[lev][0],*Bfield_aux[lev][1],*Bfield_aux[lev][2]);
 }
 
 #ifdef WARPX_QED
