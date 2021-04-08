@@ -2054,9 +2054,6 @@ PhysicalParticleContainer::getImpactIonizationFunc (const WarpXParIter& pti,
     return ImpactIonizationFilterFunc(pti, lev, ngE, Ex, Ey, Ez, Bx, By, Bz,
 				      m_v_galilean,
 				      ionization_energies.dataPtr(),
-				      adk_prefactor.dataPtr(),
-				      adk_exp_prefactor.dataPtr(),
-				      adk_power.dataPtr(),
 				      particle_icomps["ionization_level"],
 				      ion_atomic_number);
 }
