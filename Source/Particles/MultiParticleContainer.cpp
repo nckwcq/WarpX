@@ -748,7 +748,9 @@ MultiParticleContainer::doImpactIonization (int lev,
 					    const MultiFab& By,
 					    const MultiFab& Bz)
 {
-    WARPX_PROFILE("MultiParticleContainer::doFieldIonization()");
+    WARPX_PROFILE("MultiParticleContainer::doImpactIonization()");
+
+    amrex::LayoutData<amrex::Real>* cost = WarpX::getCosts(lev);
 
     // Loop over all species.
     // Ionized particles in pc_source create particles in pc_product
@@ -774,10 +776,16 @@ MultiParticleContainer::doImpactIonization (int lev,
 #endif
         for (WarpXParIter pti(*pc_source, lev, info); pti.isValid(); ++pti)
         {
+            if (cost && WarpX::load_balance_costs_update_algo == LoadBalanceCostsUpdateAlgo::Timers)
+            {
+                amrex::Gpu::synchronize();
+            }
+            Real wt = amrex::second();
+
             auto& src_tile = pc_source ->ParticlesAt(lev, pti);
             auto& dst_tile = pc_product->ParticlesAt(lev, pti);
 
-            auto Filter = phys_pc_ptr->getIonizationFunc(pti, lev, Ex.nGrow(),
+            auto Filter = phys_pc_ptr->getIonizationFunc(pti, lev, Ex.nGrowVect(),
                                                          Ex[pti], Ey[pti], Ez[pti],
                                                          Bx[pti], By[pti], Bz[pti]);
 
@@ -786,6 +794,13 @@ MultiParticleContainer::doImpactIonization (int lev,
                                                                    Filter, Copy, Transform);
 
             setNewParticleIDs(dst_tile, np_dst, num_added);
+
+            if (cost && WarpX::load_balance_costs_update_algo == LoadBalanceCostsUpdateAlgo::Timers)
+            {
+                amrex::Gpu::synchronize();
+                wt = amrex::second() - wt;
+                amrex::HostDevice::Atomic::Add( &(*cost)[pti.index()], wt);
+            }
         }
     }
 }

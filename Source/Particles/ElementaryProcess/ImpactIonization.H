@@ -17,7 +17,9 @@
 struct ImpactIonizationFilterFunc
 {
     const amrex::Real* AMREX_RESTRICT m_ionization_energies;
-    const amrex::Real* AMREX_RESTRICT m_cross_section;
+    const amrex::Real* AMREX_RESTRICT m_adk_prefactor;
+    const amrex::Real* AMREX_RESTRICT m_adk_exp_prefactor;
+    const amrex::Real* AMREX_RESTRICT m_adk_power;
 
     int comp;
     int m_atomic_number;
@@ -49,7 +51,7 @@ struct ImpactIonizationFilterFunc
 
     amrex::Dim3 m_lo;
 
-    ImpactIonizationFilterFunc (const WarpXParIter& a_pti, int lev, int ngE,
+    ImpactIonizationFilterFunc (const WarpXParIter& a_pti, int lev, amrex::IntVect ngE,
 				amrex::FArrayBox const& exfab,
 				amrex::FArrayBox const& eyfab,
 				amrex::FArrayBox const& ezfab,
@@ -109,7 +111,9 @@ struct ImpactIonizationFilterFunc
                                );
 
             // Compute probability of ionization p
-            amrex::Real w_dtau = 0.5;
+            amrex::Real w_dtau = 1._rt/ ga * m_adk_prefactor[ion_lev] *
+                std::pow(E, m_adk_power[ion_lev]) *
+                std::exp( m_adk_exp_prefactor[ion_lev]/E );
             amrex::Real p = 1._rt - std::exp( - w_dtau );
 
             amrex::Real random_draw = amrex::Random(engine);

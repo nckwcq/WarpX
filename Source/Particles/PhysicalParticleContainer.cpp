@@ -2038,6 +2038,29 @@ PhysicalParticleContainer::getIonizationFunc (const WarpXParIter& pti,
                                 ion_atomic_number);
 }
 
+ImpactIonizationFilterFunc
+PhysicalParticleContainer::getImpactIonizationFunc (const WarpXParIter& pti,
+						    int lev,
+						    amrex::IntVect ngE,
+						    const amrex::FArrayBox& Ex,
+						    const amrex::FArrayBox& Ey,
+						    const amrex::FArrayBox& Ez,
+						    const amrex::FArrayBox& Bx,
+						    const amrex::FArrayBox& By,
+						    const amrex::FArrayBox& Bz)
+{
+    WARPX_PROFILE("PhysicalParticleContainer::getImpactIonizationFunc()");
+
+    return ImpactIonizationFilterFunc(pti, lev, ngE, Ex, Ey, Ez, Bx, By, Bz,
+				      m_v_galilean,
+				      ionization_energies.dataPtr(),
+				      adk_prefactor.dataPtr(),
+				      adk_exp_prefactor.dataPtr(),
+				      adk_power.dataPtr(),
+				      particle_icomps["ionization_level"],
+				      ion_atomic_number);
+}
+
 void PhysicalParticleContainer::resample (const int timestep)
 {
     // In heavily load imbalanced simulations, MPI processes with few particles will spend most of

@@ -14,6 +14,7 @@
 #include "WarpXParticleContainer.H"
 #include "Filter/NCIGodfreyFilter.H"
 #include "Particles/ElementaryProcess/Ionization.H"
+#include "Particles/ElementaryProcess/ImpactIonization.H"
 #include "Particles/Gather/ScaleFields.H"
 
 #ifdef WARPX_QED
@@ -171,6 +172,16 @@ public:
                                             const amrex::FArrayBox& Bx,
                                             const amrex::FArrayBox& By,
                                             const amrex::FArrayBox& Bz);
+
+    ImpactIonizationFilterFunc getImpactIonizationFunc (const WarpXParIter& pti,
+							int lev,
+							amrex::IntVect ngE,
+							const amrex::FArrayBox& Ex,
+							const amrex::FArrayBox& Ey,
+							const amrex::FArrayBox& Ez,
+							const amrex::FArrayBox& Bx,
+							const amrex::FArrayBox& By,
+							const amrex::FArrayBox& Bz);
 
     // Inject particles in Box 'part_box'
     virtual void AddParticles (int lev);
