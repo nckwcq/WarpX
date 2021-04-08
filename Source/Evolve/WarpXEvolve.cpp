@@ -21,7 +21,6 @@
 #include <cmath>
 #include <limits>
 
-
 using namespace amrex;
 
 void
@@ -125,6 +124,18 @@ WarpX::Evolve (int numsteps)
                 FillBoundaryAux(guard_cells.ng_UpdateAux);
             }
         }
+
+        // Run multi-physics modules:
+        // ionization, Coulomb collisions, QED Schwinger
+        doFieldIonization();
+        doImpactIonization();
+        mypc->doCollisions( cur_time );
+#ifdef WARPX_QED
+        mypc->doQEDSchwinger();
+#endif
+
+        // Main PIC operation:
+        // gather fields, push particles, deposit sources, update fields
         if (do_subcycling == 0 || finest_level == 0) {
             OneStep_nosub(cur_time);
             // E : guard cells are up-to-date
@@ -137,13 +148,21 @@ WarpX::Evolve (int numsteps)
             amrex::Abort("Unsupported do_subcycling type");
         }
 
+        // Run remaining QED modules
+#ifdef WARPX_QED
+        doQEDEvents();
+#endif
+
+        // Resample particles
+        // +1 is necessary here because value of step seen by user (first step is 1) is different than
+        // value of step in code (first step is 0)
+        mypc->doResampling(istep[0]+1);
+
         if (num_mirrors>0){
             applyMirrors(cur_time);
             // E : guard cells are NOT up-to-date
             // B : guard cells are NOT up-to-date
         }
-
-        if (warpx_py_beforeEsolve) warpx_py_beforeEsolve();
 
         if (cur_time + dt[0] >= stop_time - 1.e-3*dt[0] || step == numsteps_max-1) {
             // At the end of last step, push p by 0.5*dt to synchronize
@@ -158,8 +177,6 @@ WarpX::Evolve (int numsteps)
             }
             is_synchronized = true;
         }
-
-        if (warpx_py_afterEsolve) warpx_py_afterEsolve();
 
         for (int lev = 0; lev <= max_level; ++lev) {
             ++istep[lev];
@@ -278,15 +295,6 @@ void
 WarpX::OneStep_nosub (Real cur_time)
 {
 
-    // Loop over species. For each ionizable species, create particles in
-    // product species.
-    doFieldIonization();
-    doImpactIonization();
-    
-    mypc->doCollisions( cur_time );
-#ifdef WARPX_QED
-    mypc->doQEDSchwinger();
-#endif
     // Push particle from x^{n} to x^{n+1}
     //               from p^{n-1/2} to p^{n+1/2}
     // Deposit current j^{n+1/2}
@@ -297,28 +305,6 @@ WarpX::OneStep_nosub (Real cur_time)
     PushParticlesandDepose(cur_time);
 
     if (warpx_py_afterdeposition) warpx_py_afterdeposition();
-
-// TODO
-// Apply current correction in Fourier space: for domain decomposition with local
-// FFTs over guard cells, apply this before calling SyncCurrent
-    if (WarpX::maxwell_solver_id == MaxwellSolverAlgo::PSATD) {
-        if (!fft_periodic_single_box && current_correction)
-            amrex::Abort(
-                    "\nCurrent correction does not guarantee charge conservation with local FFTs over guard cells:\n"
-                    "set psatd.periodic_single_box_fft=1 too, in order to guarantee charge conservation");
-        if (!fft_periodic_single_box && (WarpX::current_deposition_algo == CurrentDepositionAlgo::Vay))
-            amrex::Abort(
-                    "\nVay current deposition does not guarantee charge conservation with local FFTs over guard cells:\n"
-                    "set psatd.periodic_single_box_fft=1 too, in order to guarantee charge conservation");
-    }
-
-#ifdef WARPX_QED
-    doQEDEvents();
-#endif
-
-    // +1 is necessary here because value of step seen by user (first step is 1) is different than
-    // value of step in code (first step is 0)
-    mypc->doResampling(istep[0]+1);
 
     // Synchronize J and rho
     SyncCurrent();
@@ -332,7 +318,6 @@ WarpX::OneStep_nosub (Real cur_time)
             VayDeposition();
     }
 
-
     // At this point, J is up-to-date inside the domain, and E and B are
     // up-to-date including enough guard cells for first step of the field
     // solve.
@@ -340,6 +325,8 @@ WarpX::OneStep_nosub (Real cur_time)
     // For extended PML: copy J from regular grid to PML, and damp J in PML
     if (do_pml && pml_has_particles) CopyJPML();
     if (do_pml && do_pml_j_damping) DampJPML();
+
+    if (warpx_py_beforeEsolve) warpx_py_beforeEsolve();
 
     if( do_electrostatic == ElectrostaticSolverAlgo::None ) {
         // Electromagnetic solver:
@@ -369,7 +356,9 @@ WarpX::OneStep_nosub (Real cur_time)
             FillBoundaryF(guard_cells.ng_FieldSolverF);
             EvolveB(0.5_rt * dt[0]); // We now have B^{n+1/2}
 
+            if (do_silver_mueller) ApplySilverMuellerBoundary( dt[0] );
             FillBoundaryB(guard_cells.ng_FieldSolver);
+
             if (WarpX::em_solver_medium == MediumForEM::Vacuum) {
                 // vacuum medium
                 EvolveE(dt[0]); // We now have E^{n+1}
@@ -396,7 +385,10 @@ WarpX::OneStep_nosub (Real cur_time)
             if (safe_guard_cells)
                 FillBoundaryB(guard_cells.ng_alloc_EB);
         } // !PSATD
+
     } // !do_electrostatic
+
+    if (warpx_py_afterEsolve) warpx_py_afterEsolve();
 }
 
 /* /brief Perform one PIC iteration, with subcycling
@@ -425,17 +417,6 @@ WarpX::OneStep_sub1 (Real curtime)
     }
 
     // TODO: we could save some charge depositions
-    // Loop over species. For each ionizable species, create particles in
-    // product species.
-    doFieldIonization();
-
-#ifdef WARPX_QED
-    doQEDEvents();
-#endif
-
-    // +1 is necessary here because value of step seen by user (first step is 1) is different than
-    // value of step in code (first step is 0)
-    mypc->doResampling(istep[0]+1);
 
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(finest_level == 1, "Must have exactly two levels");
     const int fine_lev = 1;
@@ -636,17 +617,25 @@ WarpX::PushParticlesandDepose (amrex::Real cur_time)
 void
 WarpX::PushParticlesandDepose (int lev, amrex::Real cur_time, DtType a_dt_type)
 {
+    // If warpx.do_current_centering = 1, the current is deposited on the nodal MultiFab current_fp_nodal
+    // and then centered onto the staggered MultiFab current_fp
+    amrex::MultiFab* current_x = (WarpX::do_current_centering) ? current_fp_nodal[lev][0].get()
+                                                               : current_fp[lev][0].get();
+    amrex::MultiFab* current_y = (WarpX::do_current_centering) ? current_fp_nodal[lev][1].get()
+                                                               : current_fp[lev][1].get();
+    amrex::MultiFab* current_z = (WarpX::do_current_centering) ? current_fp_nodal[lev][2].get()
+                                                               : current_fp[lev][2].get();
+
     mypc->Evolve(lev,
                  *Efield_aux[lev][0],*Efield_aux[lev][1],*Efield_aux[lev][2],
                  *Bfield_aux[lev][0],*Bfield_aux[lev][1],*Bfield_aux[lev][2],
-                 *Efield_avg_aux[lev][0],*Efield_avg_aux[lev][1],*Efield_avg_aux[lev][2],
-                 *Bfield_avg_aux[lev][0],*Bfield_avg_aux[lev][1],*Bfield_avg_aux[lev][2],
-                 *current_fp[lev][0],*current_fp[lev][1],*current_fp[lev][2],
+                 *current_x, *current_y, *current_z,
                  current_buf[lev][0].get(), current_buf[lev][1].get(), current_buf[lev][2].get(),
                  rho_fp[lev].get(), charge_buf[lev].get(),
                  Efield_cax[lev][0].get(), Efield_cax[lev][1].get(), Efield_cax[lev][2].get(),
                  Bfield_cax[lev][0].get(), Bfield_cax[lev][1].get(), Bfield_cax[lev][2].get(),
                  cur_time, dt[lev], a_dt_type);
+
 #ifdef WARPX_DIM_RZ
     // This is called after all particles have deposited their current and charge.
     ApplyInverseVolumeScalingToCurrentDensity(current_fp[lev][0].get(), current_fp[lev][1].get(), current_fp[lev][2].get(), lev);
@@ -777,8 +766,8 @@ WarpX::CurrentCorrection ()
     {
         for ( int lev = 0; lev <= finest_level; ++lev )
         {
-            spectral_solver_fp[lev]->CurrentCorrection( current_fp[lev], rho_fp[lev] );
-            if ( spectral_solver_cp[lev] ) spectral_solver_cp[lev]->CurrentCorrection( current_cp[lev], rho_cp[lev] );
+            spectral_solver_fp[lev]->CurrentCorrection( lev, current_fp[lev], rho_fp[lev] );
+            if ( spectral_solver_cp[lev] ) spectral_solver_cp[lev]->CurrentCorrection( lev, current_cp[lev], rho_cp[lev] );
         }
     } else {
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE( false,
@@ -799,8 +788,8 @@ WarpX::VayDeposition ()
     {
         for (int lev = 0; lev <= finest_level; ++lev)
         {
-            spectral_solver_fp[lev]->VayDeposition(current_fp[lev]);
-            if (spectral_solver_cp[lev]) spectral_solver_cp[lev]->VayDeposition(current_cp[lev]);
+            spectral_solver_fp[lev]->VayDeposition(lev, current_fp[lev]);
+            if (spectral_solver_cp[lev]) spectral_solver_cp[lev]->VayDeposition(lev, current_cp[lev]);
         }
     } else {
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE( false,

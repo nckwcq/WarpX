@@ -67,6 +67,10 @@ void
 WarpX::InitData ()
 {
     WARPX_PROFILE("WarpX::InitData()");
+    Print() << "WarpX (" << WarpX::Version() << ")\n";
+#ifdef WARPX_QED
+    Print() << "PICSAR (" << WarpX::PicsarVersion() << ")\n";
+#endif
 
     if (restart_chkfile.empty())
     {
@@ -104,6 +108,10 @@ WarpX::InitData ()
         std::cout << "\nGrids Summary:\n";
         printGridSummary(std::cout, 0, finestLevel());
     }
+
+    // Check that the number of guard cells is smaller than the number of valid cells for all MultiFabs
+    // (example: a box with 16 valid cells and 32 guard cells in z will not be considered valid)
+    CheckGuardCells();
 
     if (restart_chkfile.empty())
     {
@@ -173,7 +181,7 @@ WarpX::InitPML ()
 #ifdef WARPX_DIM_RZ
         do_pml_Lo_corrected[0] = 0; // no PML at r=0, in cylindrical geometry
 #endif
-        pml[0] = std::make_unique<PML>(boxArray(0), DistributionMap(0), &Geom(0), nullptr,
+        pml[0] = std::make_unique<PML>(0, boxArray(0), DistributionMap(0), &Geom(0), nullptr,
                              pml_ncell, pml_delta, amrex::IntVect::TheZeroVector(),
                              dt[0], nox_fft, noy_fft, noz_fft, do_nodal,
                              do_dive_cleaning, do_moving_window,
@@ -188,7 +196,7 @@ WarpX::InitPML ()
                 do_pml_Lo_MR[0] = 0;
             }
 #endif
-            pml[lev] = std::make_unique<PML>(boxArray(lev), DistributionMap(lev),
+            pml[lev] = std::make_unique<PML>(lev, boxArray(lev), DistributionMap(lev),
                                    &Geom(lev), &Geom(lev-1),
                                    pml_ncell, pml_delta, refRatio(lev-1),
                                    dt[lev], nox_fft, noy_fft, noz_fft, do_nodal,
@@ -265,18 +273,18 @@ void
 WarpX::InitLevelData (int lev, Real /*time*/)
 {
 
-    ParmParse pp("warpx");
+    ParmParse pp_warpx("warpx");
 
     // default values of E_external_grid and B_external_grid
     // are used to set the E and B field when "constant" or
     // "parser" is not explicitly used in the input.
-    pp.query("B_ext_grid_init_style", B_ext_grid_s);
+    pp_warpx.query("B_ext_grid_init_style", B_ext_grid_s);
     std::transform(B_ext_grid_s.begin(),
                    B_ext_grid_s.end(),
                    B_ext_grid_s.begin(),
                    ::tolower);
 
-    pp.query("E_ext_grid_init_style", E_ext_grid_s);
+    pp_warpx.query("E_ext_grid_init_style", E_ext_grid_s);
     std::transform(E_ext_grid_s.begin(),
                    E_ext_grid_s.end(),
                    E_ext_grid_s.begin(),
@@ -285,17 +293,17 @@ WarpX::InitLevelData (int lev, Real /*time*/)
     // if the input string is "constant", the values for the
     // external grid must be provided in the input.
     if (B_ext_grid_s == "constant")
-        pp.getarr("B_external_grid", B_external_grid);
+        pp_warpx.getarr("B_external_grid", B_external_grid);
 
     // if the input string is "constant", the values for the
     // external grid must be provided in the input.
     if (E_ext_grid_s == "constant")
-        pp.getarr("E_external_grid", E_external_grid);
+        pp_warpx.getarr("E_external_grid", E_external_grid);
 
     // initialize the averaged fields only if the averaged algorithm
     // is activated ('psatd.do_time_averaging=1')
-    ParmParse ppsatd("psatd");
-    ppsatd.query("do_time_averaging", fft_do_time_averaging );
+    ParmParse pp_psatd("psatd");
+    pp_psatd.query("do_time_averaging", fft_do_time_averaging );
 
     for (int i = 0; i < 3; ++i) {
         current_fp[lev][i]->setVal(0.0);
@@ -306,10 +314,11 @@ WarpX::InitLevelData (int lev, Real /*time*/)
         if (lev == 0) {
             Bfield_aux[lev][i]->setVal(0.0);
             Efield_aux[lev][i]->setVal(0.0);
-            if (fft_do_time_averaging) {
-                Bfield_avg_aux[lev][i]->setVal(0.0);
-                Efield_avg_aux[lev][i]->setVal(0.0);
-            }
+        }
+
+        if (WarpX::do_current_centering)
+        {
+            current_fp_nodal[lev][i]->setVal(0.0);
         }
 
         if (B_ext_grid_s == "constant" || B_ext_grid_s == "default") {
@@ -322,7 +331,6 @@ WarpX::InitLevelData (int lev, Real /*time*/)
               Bfield_aux[lev][i]->setVal(B_external_grid[i]);
               Bfield_cp[lev][i]->setVal(B_external_grid[i]);
               if (fft_do_time_averaging) {
-                  Bfield_avg_aux[lev][i]->setVal(B_external_grid[i]);
                   Bfield_avg_cp[lev][i]->setVal(B_external_grid[i]);
               }
            }
@@ -337,7 +345,6 @@ WarpX::InitLevelData (int lev, Real /*time*/)
               Efield_aux[lev][i]->setVal(E_external_grid[i]);
               Efield_cp[lev][i]->setVal(E_external_grid[i]);
               if (fft_do_time_averaging) {
-                  Efield_avg_aux[lev][i]->setVal(E_external_grid[i]);
                   Efield_avg_cp[lev][i]->setVal(E_external_grid[i]);
               }
            }
@@ -352,11 +359,11 @@ WarpX::InitLevelData (int lev, Real /*time*/)
 #ifdef WARPX_DIM_RZ
        amrex::Abort("E and B parser for external fields does not work with RZ -- TO DO");
 #endif
-       Store_parserString(pp, "Bx_external_grid_function(x,y,z)",
+       Store_parserString(pp_warpx, "Bx_external_grid_function(x,y,z)",
                                                     str_Bx_ext_grid_function);
-       Store_parserString(pp, "By_external_grid_function(x,y,z)",
+       Store_parserString(pp_warpx, "By_external_grid_function(x,y,z)",
                                                     str_By_ext_grid_function);
-       Store_parserString(pp, "Bz_external_grid_function(x,y,z)",
+       Store_parserString(pp_warpx, "Bz_external_grid_function(x,y,z)",
                                                     str_Bz_ext_grid_function);
        Bxfield_parser = std::make_unique<ParserWrapper<3>>(
                                 makeParser(str_Bx_ext_grid_function,{"x","y","z"}));
@@ -400,11 +407,11 @@ WarpX::InitLevelData (int lev, Real /*time*/)
 #ifdef WARPX_DIM_RZ
        amrex::Abort("E and B parser for external fields does not work with RZ -- TO DO");
 #endif
-       Store_parserString(pp, "Ex_external_grid_function(x,y,z)",
+       Store_parserString(pp_warpx, "Ex_external_grid_function(x,y,z)",
                                                     str_Ex_ext_grid_function);
-       Store_parserString(pp, "Ey_external_grid_function(x,y,z)",
+       Store_parserString(pp_warpx, "Ey_external_grid_function(x,y,z)",
                                                     str_Ey_ext_grid_function);
-       Store_parserString(pp, "Ez_external_grid_function(x,y,z)",
+       Store_parserString(pp_warpx, "Ez_external_grid_function(x,y,z)",
                                                     str_Ez_ext_grid_function);
 
        Exfield_parser = std::make_unique<ParserWrapper<3>>(
@@ -573,4 +580,82 @@ WarpX::PerformanceHints ()
     // TODO: check MPI-rank to GPU ratio (should be 1:1)
     // TODO: check memory per MPI rank, especially if GPUs are underutilized
     // TODO: CPU tiling hints with OpenMP
+}
+
+void WarpX::CheckGuardCells()
+{
+    for (int lev = 0; lev <= finest_level; ++lev)
+    {
+        for (int dim = 0; dim < 3; ++dim)
+        {
+            CheckGuardCells(*Efield_fp[lev][dim]);
+            CheckGuardCells(*Bfield_fp[lev][dim]);
+            CheckGuardCells(*current_fp[lev][dim]);
+
+            if (WarpX::fft_do_time_averaging)
+            {
+                CheckGuardCells(*Efield_avg_fp[lev][dim]);
+                CheckGuardCells(*Bfield_avg_fp[lev][dim]);
+            }
+        }
+
+        if (rho_fp[lev])
+        {
+            CheckGuardCells(*rho_fp[lev]);
+        }
+
+        if (F_fp[lev])
+        {
+            CheckGuardCells(*F_fp[lev]);
+        }
+
+        // MultiFabs on coarse patch
+        if (lev > 0)
+        {
+            for (int dim = 0; dim < 3; ++dim)
+            {
+                CheckGuardCells(*Efield_cp[lev][dim]);
+                CheckGuardCells(*Bfield_cp[lev][dim]);
+                CheckGuardCells(*current_cp[lev][dim]);
+
+                if (WarpX::fft_do_time_averaging)
+                {
+                    CheckGuardCells(*Efield_avg_cp[lev][dim]);
+                    CheckGuardCells(*Bfield_avg_cp[lev][dim]);
+                }
+            }
+
+            if (rho_cp[lev])
+            {
+                CheckGuardCells(*rho_cp[lev]);
+            }
+
+            if (F_cp[lev])
+            {
+                CheckGuardCells(*F_cp[lev]);
+            }
+        }
+    }
+}
+
+void WarpX::CheckGuardCells(amrex::MultiFab const& mf)
+{
+    for (amrex::MFIter mfi(mf); mfi.isValid(); ++mfi)
+    {
+        const amrex::IntVect vc = mfi.validbox().enclosedCells().size();
+        const amrex::IntVect gc = mf.nGrowVect();
+        if (vc.allGT(gc) == false)
+        {
+            std::stringstream ss;
+            ss << "\nMultiFab "
+               << mf.tags()[1]
+               << ":\nthe number of guard cells "
+               << gc
+               << " is larger than or equal to the number of valid cells "
+               << vc
+               << ",\nplease reduce the number of guard cells"
+               << " or increase the grid size by changing domain decomposition";
+            amrex::Abort(ss.str());
+        }
+    }
 }

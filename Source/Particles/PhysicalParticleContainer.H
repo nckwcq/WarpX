@@ -105,12 +105,6 @@ public:
                          const amrex::MultiFab& Bx,
                          const amrex::MultiFab& By,
                          const amrex::MultiFab& Bz,
-                         const amrex::MultiFab& Ex_avg,
-                         const amrex::MultiFab& Ey_avg,
-                         const amrex::MultiFab& Ez_avg,
-                         const amrex::MultiFab& Bx_avg,
-                         const amrex::MultiFab& By_avg,
-                         const amrex::MultiFab& Bz_avg,
                          amrex::MultiFab& jx,
                          amrex::MultiFab& jy,
                          amrex::MultiFab& jz,
@@ -136,7 +130,7 @@ public:
                          amrex::FArrayBox const * bxfab,
                          amrex::FArrayBox const * byfab,
                          amrex::FArrayBox const * bzfab,
-                         const int ngE, const int /*e_is_nodal*/,
+                         const amrex::IntVect ngE, const int /*e_is_nodal*/,
                          const long offset,
                          const long np_to_push,
                          int lev, int gather_lev,
@@ -170,7 +164,7 @@ public:
 
     IonizationFilterFunc getIonizationFunc (const WarpXParIter& pti,
                                             int lev,
-                                            int ngE,
+                                            amrex::IntVect ngE,
                                             const amrex::FArrayBox& Ex,
                                             const amrex::FArrayBox& Ey,
                                             const amrex::FArrayBox& Ez,
@@ -193,7 +187,8 @@ public:
     */
     void AddPlasma (int lev, amrex::RealBox part_realbox = amrex::RealBox());
 
-    void MapParticletoBoostedFrame (amrex::Real& x, amrex::Real& y, amrex::Real& z, std::array<amrex::Real, 3>& u);
+    void MapParticletoBoostedFrame (amrex::Real& x, amrex::Real& y, amrex::Real& z,
+                                    amrex::Real& ux, amrex::Real& uy, amrex::Real& uz);
 
     void AddGaussianBeam (
         const amrex::Real x_m, const amrex::Real y_m, const amrex::Real z_m,
@@ -210,7 +205,7 @@ public:
 
     void CheckAndAddParticle (
         amrex::Real x, amrex::Real y, amrex::Real z,
-        std::array<amrex::Real, 3> u,
+        amrex::Real ux, amrex::Real uy, amrex::Real uz,
         amrex::Real weight,
         amrex::Gpu::HostVector<amrex::ParticleReal>& particle_x,
         amrex::Gpu::HostVector<amrex::ParticleReal>& particle_y,
